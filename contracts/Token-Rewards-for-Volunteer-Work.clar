@@ -5,6 +5,9 @@
 (define-constant err-not-found (err u101))
 (define-constant err-invalid-hours (err u102))
 (define-constant err-unauthorized (err u103))
+(define-constant err-invalid-rating (err u110))
+(define-constant err-activity-not-verified (err u111))
+(define-constant err-already-rated (err u112))
 
 (define-data-var token-id-nonce uint u0)
 (define-data-var total-volunteer-hours uint u0)
@@ -90,7 +93,7 @@
     (let (
             (volunteer tx-sender)
             (activity-id (+ (var-get token-id-nonce) u1))
-            (current-height (unwrap-panic (get-block-height)))
+            (current-height stacks-block-height)
         )
         (asserts! (> hours u0) err-invalid-hours)
         (asserts! (is-some (get-organization-data org)) (err u107))
@@ -169,4 +172,147 @@
 
 (define-read-only (get-block-height)
     (ok stacks-block-height)
+)
+
+(define-data-var rating-id-nonce uint u0)
+
+(define-map organization-ratings
+    { org: principal }
+    {
+        total-ratings: uint,
+        total-score: uint,
+        average-rating: uint,
+    }
+)
+
+(define-map volunteer-ratings
+    { id: uint }
+    {
+        volunteer: principal,
+        org: principal,
+        rating: uint,
+        comment: (string-ascii 200),
+        timestamp: uint,
+        activity-id: uint,
+    }
+)
+
+(define-map volunteer-org-ratings
+    {
+        volunteer: principal,
+        org: principal,
+    }
+    { has-rated: bool }
+)
+
+(define-public (rate-organization
+        (org principal)
+        (rating uint)
+        (comment (string-ascii 200))
+        (activity-id uint)
+    )
+    (let (
+            (volunteer tx-sender)
+            (rating-id (+ (var-get rating-id-nonce) u1))
+            (current-height stacks-block-height)
+            (activity (unwrap! (get-activity-data activity-id) err-not-found))
+        )
+        (asserts! (and (>= rating u1) (<= rating u5)) (err u110))
+        (asserts! (is-eq (get volunteer activity) volunteer) err-unauthorized)
+        (asserts! (is-eq (get org activity) org) err-unauthorized)
+        (asserts! (get verified activity) (err u111))
+        (asserts!
+            (is-none (map-get? volunteer-org-ratings {
+                volunteer: volunteer,
+                org: org,
+            }))
+            (err u112)
+        )
+        (begin
+            (var-set rating-id-nonce rating-id)
+            (map-set volunteer-ratings { id: rating-id } {
+                volunteer: volunteer,
+                org: org,
+                rating: rating,
+                comment: comment,
+                timestamp: current-height,
+                activity-id: activity-id,
+            })
+            (map-set volunteer-org-ratings {
+                volunteer: volunteer,
+                org: org,
+            } { has-rated: true }
+            )
+            (update-organization-rating org rating)
+            (ok rating-id)
+        )
+    )
+)
+
+(define-private (update-organization-rating
+        (org principal)
+        (new-rating uint)
+    )
+    (let (
+            (current-ratings (default-to {
+                total-ratings: u0,
+                total-score: u0,
+                average-rating: u0,
+            }
+                (map-get? organization-ratings { org: org })
+            ))
+            (new-total-ratings (+ (get total-ratings current-ratings) u1))
+            (new-total-score (+ (get total-score current-ratings) new-rating))
+            (new-average (if (> new-total-ratings u0)
+                (/ new-total-score new-total-ratings)
+                u0
+            ))
+        )
+        (map-set organization-ratings { org: org } {
+            total-ratings: new-total-ratings,
+            total-score: new-total-score,
+            average-rating: new-average,
+        })
+    )
+)
+
+(define-read-only (get-organization-rating (org principal))
+    (map-get? organization-ratings { org: org })
+)
+
+(define-read-only (get-rating-data (id uint))
+    (map-get? volunteer-ratings { id: id })
+)
+
+(define-read-only (has-volunteer-rated-org
+        (volunteer principal)
+        (org principal)
+    )
+    (is-some (map-get? volunteer-org-ratings {
+        volunteer: volunteer,
+        org: org,
+    }))
+)
+
+(define-read-only (get-organization-reputation-score (org principal))
+    (match (get-organization-rating org)
+        rating-data (ok (get average-rating rating-data))
+        (ok u0)
+    )
+)
+
+(define-read-only (can-rate-organization
+        (volunteer principal)
+        (org principal)
+        (activity-id uint)
+    )
+    (match (get-activity-data activity-id)
+        activity (ok (and
+            (is-eq (get volunteer activity) volunteer)
+            (is-eq (get org activity) org)
+            (get verified activity)
+            (not (has-volunteer-rated-org volunteer org))
+        ))
+        (ok false)
+    )
 )

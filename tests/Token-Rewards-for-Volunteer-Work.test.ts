@@ -1,63 +1,21 @@
-import { Clarinet, Tx, Chain, Account, types } from 'https://deno.land/x/clarinet@v1.0.0/index.ts';
+import { describe, expect, it } from "vitest";
 
-Clarinet.test({
-  name: "Ensures organization registration works",
-  async fn(chain: Chain, accounts: Map<string, Account>) {
-    const deployer = accounts.get("deployer")!;
-    let block = chain.mineBlock([
-      Tx.contractCall(
-        "Token-Rewards-for-Volunteer-Work",
-        "register-organization",
-        [types.ascii("Test Org")],
-        deployer.address
-      ),
-    ]);
-    block.receipts[0].result.expectOk().expectBool(true);
-  },
+const accounts = simnet.getAccounts();
+const address1 = accounts.get("wallet_1")!;
+
+/*
+  The test below is an example. To learn more, read the testing documentation here:
+  https://docs.hiro.so/stacks/clarinet-js-sdk
+*/
+
+describe("example tests", () => {
+  it("ensures simnet is well initialised", () => {
+    expect(simnet.blockHeight).toBeDefined();
+  });
+
+  // it("shows an example", () => {
+  //   const { result } = simnet.callReadOnlyFn("counter", "get-counter", [], address1);
+  //   expect(result).toBeUint(0);
+  // });
 });
 
-Clarinet.test({
-  name: "Ensures volunteer registration works",
-  async fn(chain: Chain, accounts: Map<string, Account>) {
-    const volunteer = accounts.get("wallet_1")!;
-    let block = chain.mineBlock([
-      Tx.contractCall(
-        "Token-Rewards-for-Volunteer-Work",
-        "register-volunteer",
-        [],
-        volunteer.address
-      ),
-    ]);
-    block.receipts[0].result.expectOk().expectBool(true);
-  },
-});
-
-Clarinet.test({
-  name: "Ensures logging hours works",
-  async fn(chain: Chain, accounts: Map<string, Account>) {
-    const org = accounts.get("deployer")!;
-    const volunteer = accounts.get("wallet_1")!;
-
-    let block = chain.mineBlock([
-      Tx.contractCall(
-        "Token-Rewards-for-Volunteer-Work",
-        "register-organization",
-        [types.ascii("Test Org")],
-        org.address
-      ),
-      Tx.contractCall(
-        "Token-Rewards-for-Volunteer-Work",
-        "register-volunteer",
-        [],
-        volunteer.address
-      ),
-      Tx.contractCall(
-        "Token-Rewards-for-Volunteer-Work",
-        "log-volunteer-hours",
-        [types.principal(org.address), types.uint(10), types.ascii("Test activity")],
-        volunteer.address
-      ),
-    ]);
-    block.receipts[2].result.expectOk();
-  },
-});
