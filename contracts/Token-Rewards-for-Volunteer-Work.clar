@@ -130,13 +130,14 @@
         (hours uint)
     )
     (match (get-volunteer-data volunteer)
-        v-data (begin
+        v-data (let ((new-total-hours (+ (get hours v-data) hours)))
             (map-set volunteers { volunteer: volunteer }
                 (merge v-data {
-                    hours: (+ (get hours v-data) hours),
+                    hours: new-total-hours,
                     total-rewards: (+ (get total-rewards v-data) (calculate-rewards hours)),
                 })
             )
+            (unwrap-panic (check-and-award-milestones volunteer new-total-hours))
             (ok true)
         )
         err-not-found
@@ -315,4 +316,110 @@
         ))
         (ok false)
     )
+)
+
+(define-constant milestone-tier-1 u10)
+(define-constant milestone-tier-2 u50)
+(define-constant milestone-tier-3 u100)
+(define-constant milestone-tier-4 u250)
+(define-constant milestone-tier-5 u500)
+
+(define-map volunteer-milestones
+    { volunteer: principal }
+    {
+        tier-1-achieved: bool,
+        tier-2-achieved: bool,
+        tier-3-achieved: bool,
+        tier-4-achieved: bool,
+        tier-5-achieved: bool,
+        highest-tier: uint,
+        achievement-count: uint,
+    }
+)
+
+(define-private (check-and-award-milestones
+        (volunteer principal)
+        (total-hours uint)
+    )
+    (let (
+            (current-milestones (default-to {
+                tier-1-achieved: false,
+                tier-2-achieved: false,
+                tier-3-achieved: false,
+                tier-4-achieved: false,
+                tier-5-achieved: false,
+                highest-tier: u0,
+                achievement-count: u0,
+            }
+                (map-get? volunteer-milestones { volunteer: volunteer })
+            ))
+            (new-tier-1 (or (get tier-1-achieved current-milestones) (>= total-hours milestone-tier-1)))
+            (new-tier-2 (or (get tier-2-achieved current-milestones) (>= total-hours milestone-tier-2)))
+            (new-tier-3 (or (get tier-3-achieved current-milestones) (>= total-hours milestone-tier-3)))
+            (new-tier-4 (or (get tier-4-achieved current-milestones) (>= total-hours milestone-tier-4)))
+            (new-tier-5 (or (get tier-5-achieved current-milestones) (>= total-hours milestone-tier-5)))
+            (achievement-count (+ (if new-tier-1
+                u1
+                u0
+            )
+                (if new-tier-2
+                    u1
+                    u0
+                )
+                (if new-tier-3
+                    u1
+                    u0
+                )
+                (if new-tier-4
+                    u1
+                    u0
+                )
+                (if new-tier-5
+                    u1
+                    u0
+                )))
+            (highest-tier (if new-tier-5
+                u5
+                (if new-tier-4
+                    u4
+                    (if new-tier-3
+                        u3
+                        (if new-tier-2
+                            u2
+                            (if new-tier-1
+                                u1
+                                u0
+                            )
+                        )
+                    )
+                )
+            ))
+        )
+        (begin
+            (map-set volunteer-milestones { volunteer: volunteer } {
+                tier-1-achieved: new-tier-1,
+                tier-2-achieved: new-tier-2,
+                tier-3-achieved: new-tier-3,
+                tier-4-achieved: new-tier-4,
+                tier-5-achieved: new-tier-5,
+                highest-tier: highest-tier,
+                achievement-count: achievement-count,
+            })
+            (ok true)
+        )
+    )
+)
+
+(define-read-only (get-volunteer-milestones (volunteer principal))
+    (map-get? volunteer-milestones { volunteer: volunteer })
+)
+
+(define-read-only (get-milestone-requirements)
+    (ok {
+        tier-1: milestone-tier-1,
+        tier-2: milestone-tier-2,
+        tier-3: milestone-tier-3,
+        tier-4: milestone-tier-4,
+        tier-5: milestone-tier-5,
+    })
 )
