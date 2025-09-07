@@ -423,3 +423,191 @@
         tier-5: milestone-tier-5,
     })
 )
+
+(define-constant err-skill-not-found (err u113))
+(define-constant err-skill-already-exists (err u114))
+(define-constant err-invalid-skill-level (err u115))
+(define-constant err-cannot-verify-own-skill (err u116))
+(define-constant err-already-endorsed (err u117))
+
+(define-data-var skill-id-nonce uint u0)
+
+(define-map volunteer-skills
+    {
+        volunteer: principal,
+        skill-name: (string-ascii 30),
+    }
+    {
+        skill-level: uint,
+        verified: bool,
+        verifier-count: uint,
+        total-endorsements: uint,
+    }
+)
+
+(define-map skill-verifications
+    { id: uint }
+    {
+        volunteer: principal,
+        verifier: principal,
+        skill-name: (string-ascii 30),
+        activity-id: uint,
+        timestamp: uint,
+    }
+)
+
+(define-map skill-endorsements
+    {
+        volunteer: principal,
+        skill-name: (string-ascii 30),
+        endorser: principal,
+    }
+    { endorsed: bool }
+)
+
+(define-public (claim-skill
+        (skill-name (string-ascii 30))
+        (skill-level uint)
+    )
+    (let ((volunteer tx-sender))
+        (asserts! (is-some (get-volunteer-data volunteer)) (err u108))
+        (asserts! (and (>= skill-level u1) (<= skill-level u5))
+            err-invalid-skill-level
+        )
+        (asserts! (is-none (get-volunteer-skill volunteer skill-name))
+            err-skill-already-exists
+        )
+        (map-set volunteer-skills {
+            volunteer: volunteer,
+            skill-name: skill-name,
+        } {
+            skill-level: skill-level,
+            verified: false,
+            verifier-count: u0,
+            total-endorsements: u0,
+        })
+        (ok true)
+    )
+)
+
+(define-public (verify-volunteer-skill
+        (volunteer principal)
+        (skill-name (string-ascii 30))
+        (activity-id uint)
+    )
+    (let (
+            (verifier tx-sender)
+            (verification-id (+ (var-get skill-id-nonce) u1))
+            (activity (unwrap! (get-activity-data activity-id) err-not-found))
+            (skill-data (unwrap! (get-volunteer-skill volunteer skill-name)
+                err-skill-not-found
+            ))
+        )
+        (asserts! (is-eq verifier (get org activity)) err-unauthorized)
+        (asserts! (is-eq volunteer (get volunteer activity)) err-unauthorized)
+        (asserts! (get verified activity) err-activity-not-verified)
+        (asserts! (not (is-eq verifier volunteer)) err-cannot-verify-own-skill)
+        (let ((updated-verifiers (+ (get verifier-count skill-data) u1)))
+            (var-set skill-id-nonce verification-id)
+            (map-set skill-verifications { id: verification-id } {
+                volunteer: volunteer,
+                verifier: verifier,
+                skill-name: skill-name,
+                activity-id: activity-id,
+                timestamp: stacks-block-height,
+            })
+            (map-set volunteer-skills {
+                volunteer: volunteer,
+                skill-name: skill-name,
+            }
+                (merge skill-data {
+                    verified: (>= updated-verifiers u1),
+                    verifier-count: updated-verifiers,
+                })
+            )
+            (ok verification-id)
+        )
+    )
+)
+
+(define-public (endorse-volunteer-skill
+        (volunteer principal)
+        (skill-name (string-ascii 30))
+    )
+    (let (
+            (endorser tx-sender)
+            (skill-data (unwrap! (get-volunteer-skill volunteer skill-name)
+                err-skill-not-found
+            ))
+        )
+        (asserts! (is-some (get-volunteer-data endorser)) (err u108))
+        (asserts! (not (is-eq endorser volunteer)) err-cannot-verify-own-skill)
+        (asserts! (is-none (get-skill-endorsement volunteer skill-name endorser))
+            err-already-endorsed
+        )
+        (let ((updated-endorsements (+ (get total-endorsements skill-data) u1)))
+            (map-set skill-endorsements {
+                volunteer: volunteer,
+                skill-name: skill-name,
+                endorser: endorser,
+            } { endorsed: true }
+            )
+            (map-set volunteer-skills {
+                volunteer: volunteer,
+                skill-name: skill-name,
+            }
+                (merge skill-data { total-endorsements: updated-endorsements })
+            )
+            (ok true)
+        )
+    )
+)
+
+(define-read-only (get-volunteer-skill
+        (volunteer principal)
+        (skill-name (string-ascii 30))
+    )
+    (map-get? volunteer-skills {
+        volunteer: volunteer,
+        skill-name: skill-name,
+    })
+)
+
+(define-read-only (get-skill-verification (id uint))
+    (map-get? skill-verifications { id: id })
+)
+
+(define-read-only (get-skill-endorsement
+        (volunteer principal)
+        (skill-name (string-ascii 30))
+        (endorser principal)
+    )
+    (map-get? skill-endorsements {
+        volunteer: volunteer,
+        skill-name: skill-name,
+        endorser: endorser,
+    })
+)
+
+(define-read-only (is-skill-verified
+        (volunteer principal)
+        (skill-name (string-ascii 30))
+    )
+    (match (get-volunteer-skill volunteer skill-name)
+        skill-data (ok (get verified skill-data))
+        (ok false)
+    )
+)
+
+(define-read-only (get-volunteer-skill-score
+        (volunteer principal)
+        (skill-name (string-ascii 30))
+    )
+    (match (get-volunteer-skill volunteer skill-name)
+        skill-data (ok (+ (* (get skill-level skill-data) u10)
+            (* (get verifier-count skill-data) u5)
+            (get total-endorsements skill-data)
+        ))
+        (ok u0)
+    )
+)
