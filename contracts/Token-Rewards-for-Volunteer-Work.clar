@@ -611,3 +611,162 @@
         (ok u0)
     )
 )
+
+(define-constant err-insufficient-rewards (err u118))
+(define-constant err-withdrawal-cooldown-active (err u119))
+(define-constant err-exceeds-max-withdrawal (err u120))
+
+(define-constant withdrawal-cooldown-blocks u144)
+
+(define-data-var withdrawal-id-nonce uint u0)
+(define-data-var total-rewards-withdrawn uint u0)
+(define-data-var max-withdrawal-amount uint u1000)
+
+(define-map volunteer-withdrawals
+    { volunteer: principal }
+    {
+        total-withdrawn: uint,
+        last-withdrawal-block: uint,
+        withdrawal-count: uint,
+        claimed-rewards: uint,
+    }
+)
+
+(define-map withdrawal-history
+    { id: uint }
+    {
+        volunteer: principal,
+        amount: uint,
+        timestamp: uint,
+        remaining-balance: uint,
+    }
+)
+
+(define-public (withdraw-rewards (amount uint))
+    (let (
+            (volunteer tx-sender)
+            (v-data (unwrap! (get-volunteer-data volunteer) err-not-found))
+            (withdrawal-data (default-to {
+                total-withdrawn: u0,
+                last-withdrawal-block: u0,
+                withdrawal-count: u0,
+                claimed-rewards: u0,
+            }
+                (map-get? volunteer-withdrawals { volunteer: volunteer })
+            ))
+            (available-rewards (- (get total-rewards v-data) (get claimed-rewards withdrawal-data)))
+            (withdrawal-id (+ (var-get withdrawal-id-nonce) u1))
+            (blocks-since-last (- stacks-block-height (get last-withdrawal-block withdrawal-data)))
+        )
+        (asserts! (> amount u0) err-invalid-hours)
+        (asserts! (<= amount (var-get max-withdrawal-amount))
+            err-exceeds-max-withdrawal
+        )
+        (asserts! (<= amount available-rewards) err-insufficient-rewards)
+        (asserts!
+            (or
+                (is-eq (get last-withdrawal-block withdrawal-data) u0)
+                (>= blocks-since-last withdrawal-cooldown-blocks)
+            )
+            err-withdrawal-cooldown-active
+        )
+        (let ((new-claimed (+ (get claimed-rewards withdrawal-data) amount)))
+            (var-set withdrawal-id-nonce withdrawal-id)
+            (var-set total-rewards-withdrawn
+                (+ (var-get total-rewards-withdrawn) amount)
+            )
+            (map-set volunteer-withdrawals { volunteer: volunteer } {
+                total-withdrawn: (+ (get total-withdrawn withdrawal-data) amount),
+                last-withdrawal-block: stacks-block-height,
+                withdrawal-count: (+ (get withdrawal-count withdrawal-data) u1),
+                claimed-rewards: new-claimed,
+            })
+            (map-set withdrawal-history { id: withdrawal-id } {
+                volunteer: volunteer,
+                amount: amount,
+                timestamp: stacks-block-height,
+                remaining-balance: (- available-rewards amount),
+            })
+            (ok withdrawal-id)
+        )
+    )
+)
+
+(define-public (update-max-withdrawal (new-max uint))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (var-set max-withdrawal-amount new-max)
+        (ok true)
+    )
+)
+
+(define-read-only (get-withdrawal-data (volunteer principal))
+    (map-get? volunteer-withdrawals { volunteer: volunteer })
+)
+
+(define-read-only (get-withdrawal-history (id uint))
+    (map-get? withdrawal-history { id: id })
+)
+
+(define-read-only (get-available-rewards (volunteer principal))
+    (match (get-volunteer-data volunteer)
+        v-data (let ((withdrawal-data (default-to {
+                total-withdrawn: u0,
+                last-withdrawal-block: u0,
+                withdrawal-count: u0,
+                claimed-rewards: u0,
+            }
+                (map-get? volunteer-withdrawals { volunteer: volunteer })
+            )))
+            (ok (- (get total-rewards v-data) (get claimed-rewards withdrawal-data)))
+        )
+        err-not-found
+    )
+)
+
+(define-read-only (can-withdraw (volunteer principal))
+    (match (get-volunteer-data volunteer)
+        v-data (let (
+                (withdrawal-data (default-to {
+                    total-withdrawn: u0,
+                    last-withdrawal-block: u0,
+                    withdrawal-count: u0,
+                    claimed-rewards: u0,
+                }
+                    (map-get? volunteer-withdrawals { volunteer: volunteer })
+                ))
+                (blocks-since-last (- stacks-block-height
+                    (get last-withdrawal-block withdrawal-data)
+                ))
+            )
+            (ok (or
+                (is-eq (get last-withdrawal-block withdrawal-data) u0)
+                (>= blocks-since-last withdrawal-cooldown-blocks)
+            ))
+        )
+        (ok false)
+    )
+)
+
+(define-read-only (get-blocks-until-next-withdrawal (volunteer principal))
+    (match (get-withdrawal-data volunteer)
+        withdrawal-data (let ((blocks-since-last (- stacks-block-height (get last-withdrawal-block withdrawal-data))))
+            (ok (if (>= blocks-since-last withdrawal-cooldown-blocks)
+                u0
+                (- withdrawal-cooldown-blocks blocks-since-last)
+            ))
+        )
+        (ok u0)
+    )
+)
+
+(define-read-only (get-total-rewards-withdrawn)
+    (ok (var-get total-rewards-withdrawn))
+)
+
+(define-read-only (get-withdrawal-limits)
+    (ok {
+        max-withdrawal: (var-get max-withdrawal-amount),
+        cooldown-blocks: withdrawal-cooldown-blocks,
+    })
+)
