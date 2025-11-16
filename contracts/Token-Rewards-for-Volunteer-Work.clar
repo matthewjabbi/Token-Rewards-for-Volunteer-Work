@@ -770,3 +770,56 @@
         cooldown-blocks: withdrawal-cooldown-blocks,
     })
 )
+
+(define-read-only (get-volunteer-overview (volunteer principal))
+    (match (get-volunteer-data volunteer)
+        v-data (let (
+                (withdrawal-data (default-to {
+                    total-withdrawn: u0,
+                    last-withdrawal-block: u0,
+                    withdrawal-count: u0,
+                    claimed-rewards: u0,
+                }
+                    (map-get? volunteer-withdrawals { volunteer: volunteer })
+                ))
+                (milestones (default-to {
+                    tier-1-achieved: false,
+                    tier-2-achieved: false,
+                    tier-3-achieved: false,
+                    tier-4-achieved: false,
+                    tier-5-achieved: false,
+                    highest-tier: u0,
+                    achievement-count: u0,
+                }
+                    (map-get? volunteer-milestones { volunteer: volunteer })
+                ))
+                (available-rewards (- (get total-rewards v-data)
+                    (get claimed-rewards withdrawal-data)
+                ))
+            )
+            (ok {
+                volunteer: volunteer,
+                hours: (get hours v-data),
+                total-rewards: (get total-rewards v-data),
+                available-rewards: available-rewards,
+                organization: (get organization v-data),
+                withdrawals: {
+                    total-withdrawn: (get total-withdrawn withdrawal-data),
+                    last-withdrawal-block: (get last-withdrawal-block withdrawal-data),
+                    withdrawal-count: (get withdrawal-count withdrawal-data),
+                    claimed-rewards: (get claimed-rewards withdrawal-data),
+                },
+                milestones: {
+                    tier-1-achieved: (get tier-1-achieved milestones),
+                    tier-2-achieved: (get tier-2-achieved milestones),
+                    tier-3-achieved: (get tier-3-achieved milestones),
+                    tier-4-achieved: (get tier-4-achieved milestones),
+                    tier-5-achieved: (get tier-5-achieved milestones),
+                    highest-tier: (get highest-tier milestones),
+                    achievement-count: (get achievement-count milestones),
+                },
+            })
+        )
+        err-not-found
+    )
+)
